@@ -16,13 +16,12 @@ be trained to solve a particular tasks."""
 from typing import Optional, Union
 
 from qiskit import QuantumCircuit
-from qiskit.circuit.library import RealAmplitudes, ZZFeatureMap
 from qiskit.opflow import PauliSumOp, StateFn, OperatorBase, ExpectationBase
 from qiskit.providers import BaseBackend, Backend
 from qiskit.utils import QuantumInstance
 
+from qiskit_machine_learning.utils.num_qubits_helper import _retrieve_arguments_if_none
 from .opflow_qnn import OpflowQNN
-from ..exceptions import QiskitMachineLearningError
 
 
 class TwoLayerQNN(OpflowQNN):
@@ -47,52 +46,18 @@ class TwoLayerQNN(OpflowQNN):
                 the `RealAmplitudes` circuit is used.
             observable: observable to be measured to determine the output of the network. If None
                 is given, the `Z^{\otimes num_qubits}` observable is used.
+            quantum_instance: Quantum Instance or Backend or BaseBackend.
 
         Raises:
             QiskitMachineLearningError: In case of inconsistent num_qubits, feature_map, ansatz.
         """
 
         # check num_qubits, feature_map, and ansatz
-        if num_qubits is None and feature_map is None and ansatz is None:
-            raise QiskitMachineLearningError(
-                'Need at least one of num_qubits, feature_map, or ansatz!')
-        num_qubits_: int = None
-        feature_map_: QuantumCircuit = None
-        ansatz_: QuantumCircuit = None
-        if num_qubits:
-            num_qubits_ = num_qubits
-            if feature_map:
-                if feature_map.num_qubits != num_qubits:
-                    raise QiskitMachineLearningError('Incompatible num_qubits and feature_map!')
-                feature_map_ = feature_map
-            else:
-                feature_map_ = ZZFeatureMap(num_qubits)
-            if ansatz:
-                if ansatz.num_qubits != num_qubits:
-                    raise QiskitMachineLearningError('Incompatible num_qubits and ansatz!')
-                ansatz_ = ansatz
-            else:
-                ansatz_ = RealAmplitudes(num_qubits)
-        else:
-            if feature_map and ansatz:
-                if feature_map.num_qubits != ansatz.num_qubits:
-                    raise QiskitMachineLearningError('Incompatible feature_map and ansatz!')
-                feature_map_ = feature_map
-                ansatz_ = ansatz
-                num_qubits_ = feature_map.num_qubits
-            elif feature_map:
-                num_qubits_ = feature_map.num_qubits
-                feature_map_ = feature_map
-                ansatz_ = RealAmplitudes(num_qubits_)
-            elif ansatz:
-                num_qubits_ = ansatz.num_qubits
-                ansatz_ = ansatz
-                feature_map_ = ZZFeatureMap(num_qubits_)
+        self._ansatz, self._feature_map, num_qubits_ = _retrieve_arguments_if_none(ansatz,
+                                                                                   feature_map,
+                                                                                   num_qubits)
 
-        self._feature_map = feature_map_
         input_params = list(self._feature_map.parameters)
-
-        self._ansatz = ansatz_
         weight_params = list(self._ansatz.parameters)
 
         # construct circuit
@@ -101,7 +66,8 @@ class TwoLayerQNN(OpflowQNN):
         self._circuit.append(self._ansatz, range(num_qubits_))
 
         # construct observable
-        self.observable = observable if observable else PauliSumOp.from_list([('Z'*num_qubits_, 1)])
+        self.observable = observable if observable else PauliSumOp.from_list(
+            [('Z' * num_qubits_, 1)])
 
         # combine all to operator
         operator = ~StateFn(self.observable) @ StateFn(self._circuit)

@@ -53,16 +53,40 @@ def discretize_and_truncate(data, bounds, num_qubits, return_data_grid_elements=
     data = data.reshape((len(data), len(num_qubits)))
     temp = []
     for i, data_sample in enumerate(data):
-        append = True
-        for j, entry in enumerate(data_sample):
-            if entry < bounds[j, 0]:
-                append = False
-            if entry > bounds[j, 1]:
-                append = False
-        if append:
+        if all(bounds[j, 0] <= entry <= bounds[j, 1] for j, entry in enumerate(data_sample)):
             temp.append(list(data_sample))
     data = np.array(temp)
 
+    data_grid, grid_elements = _fit_data_to_element_grid(bounds, data, num_qubits)
+
+    data = np.reshape(data, (len(data), len(data[0])))
+
+    if return_prob:
+        if np.ndim(data) > 1:
+            prob_data = np.zeros(int(np.prod(np.power(np.ones(len(data[0])) * 2, num_qubits))))
+        else:
+            prob_data = np.zeros(int(np.prod(np.power(np.array([2]), num_qubits))))
+        for data_element in data:
+            for i, element in enumerate(grid_elements):
+                if all(data_element == element):
+                    prob_data[i] += 1 / len(data)
+        if prob_non_zero:
+            # add epsilon to avoid 0 entries which can be problematic in loss functions (division)
+            prob_data = [1e-10 if x == 0 else x for x in prob_data]
+
+        if return_data_grid_elements:
+            return data, data_grid, grid_elements, prob_data
+        else:
+            return data, data_grid, prob_data
+
+    elif return_data_grid_elements:
+        return data, data_grid, grid_elements
+
+    else:
+        return data, data_grid
+
+
+def _fit_data_to_element_grid(bounds, data, num_qubits):
     # Fit the data to the data element grid
     for j, prec in enumerate(num_qubits):
         data_row = data[:, j]  # dim j of all data samples
@@ -91,37 +115,11 @@ def discretize_and_truncate(data, bounds, num_qubits, return_data_grid_elements=
             temp = []
             for grid_element in grid_elements:
                 for element_current in elements_current_dim:
-                    temp.append(grid_element+[element_current])
+                    temp.append(grid_element + [element_current])
             grid_elements = deepcopy(temp)
             data_grid.append(elements_current_dim)
     data_grid = np.array(data_grid, dtype=object)
-
-    data = np.reshape(data, (len(data), len(data[0])))
-
-    if return_prob:
-        if np.ndim(data) > 1:
-            prob_data = np.zeros(int(np.prod(np.power(np.ones(len(data[0])) * 2, num_qubits))))
-        else:
-            prob_data = np.zeros(int(np.prod(np.power(np.array([2]), num_qubits))))
-        for data_element in data:
-            for i, element in enumerate(grid_elements):
-                if all(data_element == element):
-                    prob_data[i] += 1 / len(data)
-        if prob_non_zero:
-            # add epsilon to avoid 0 entries which can be problematic in loss functions (division)
-            prob_data = [1e-10 if x == 0 else x for x in prob_data]
-
-        if return_data_grid_elements:
-            return data, data_grid, grid_elements, prob_data
-        else:
-            return data, data_grid, prob_data
-
-    else:
-        if return_data_grid_elements:
-            return data, data_grid, grid_elements
-
-        else:
-            return data, data_grid
+    return data_grid, grid_elements
 
 
 def features_and_labels_transform(dataset: Dict[str, np.ndarray],
