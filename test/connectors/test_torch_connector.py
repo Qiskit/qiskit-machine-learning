@@ -13,7 +13,7 @@
 """Test Torch Connector."""
 
 import unittest
-
+import traceback
 from typing import List
 
 from test import QiskitMachineLearningTestCase, requires_extra_library
@@ -38,7 +38,7 @@ from qiskit import QuantumCircuit
 from qiskit.providers.aer import AerSimulator, StatevectorSimulator
 from qiskit.exceptions import MissingOptionalLibraryError
 from qiskit.circuit import Parameter
-from qiskit.utils import QuantumInstance
+from qiskit.utils import QuantumInstance, algorithm_globals
 from qiskit.opflow import StateFn, ListOp, PauliSumOp
 
 from qiskit_machine_learning import QiskitMachineLearningError
@@ -52,10 +52,31 @@ class TestTorchConnector(QiskitMachineLearningTestCase):
 
     def setUp(self):
         super().setUp()
-
+        algorithm_globals.seed = 12345
         # specify quantum instances
-        self.sv_quantum_instance = QuantumInstance(StatevectorSimulator())
-        self.qasm_quantum_instance = QuantumInstance(AerSimulator(), shots=100)
+        self.sv_quantum_instance = QuantumInstance(
+            StatevectorSimulator(),
+            seed_simulator=algorithm_globals.seed,
+            seed_transpiler=algorithm_globals.seed,
+        )
+        self.qasm_quantum_instance = QuantumInstance(
+            AerSimulator(),
+            shots=100,
+            seed_simulator=algorithm_globals.seed,
+            seed_transpiler=algorithm_globals.seed,
+        )
+        try:
+            import torch
+
+            torch.manual_seed(algorithm_globals.seed)
+        except ImportError:
+            pass
+
+    @staticmethod
+    def _exception_to_string(excp: Exception) -> str:
+        stack = traceback.extract_stack()[:-3] + traceback.extract_tb(excp.__traceback__)
+        pretty = traceback.format_list(stack)
+        return "".join(pretty) + "\n  {} {}".format(excp.__class__, excp)
 
     def validate_output_shape(self, model: TorchConnector, test_data: List[Tensor]) -> None:
         """Creates a Linear PyTorch module with the same in/out dimensions as the given model,
@@ -93,31 +114,48 @@ class TestTorchConnector(QiskitMachineLearningTestCase):
             c_worked = True
             try:
                 c_shape = linear(x).shape
-            except Exception:  # pylint: disable=broad-except
+            except Exception as ex:  # pylint: disable=broad-except
                 c_worked = False
+                self.log.debug("c_worked False: %s", TestTorchConnector._exception_to_string(ex))
 
             # test quantum model and track whether it failed or store the output shape
             q_worked = True
             try:
                 q_shape = model(x).shape
-            except Exception:  # pylint: disable=broad-except
+            except Exception as ex:  # pylint: disable=broad-except
                 q_worked = False
+                self.log.debug("q_worked False: %s", TestTorchConnector._exception_to_string(ex))
+                if c_worked:
+                    print(
+                        f"\nc_worked: {c_worked}, q_worked: {q_worked}.\n"
+                        f"Tensor: {x}\n"
+                        f"Exception: {TestTorchConnector._exception_to_string(ex)}\n"
+                    )
 
             # compare results and assert that the behavior is equal
-            self.assertEqual(c_worked, q_worked)
-            if c_worked:
-                self.assertEqual(c_shape, q_shape)
+            with self.subTest("c_worked == q_worked", tensor=x):
+                self.assertEqual(c_worked, q_worked)
+            if c_worked and q_worked:
+                with self.subTest("c_shape == q_shape", tensor=x):
+                    self.assertEqual(c_shape, q_shape)
 
     def validate_backward_pass(self, model: TorchConnector) -> None:
         """Uses PyTorch to validate the backward pass / autograd.
 
         Args:
             model: The model to be tested.
+
+        Raises:
+            MissingOptionalLibraryError: torch not installed
         """
         try:
             import torch
         except ImportError as ex:
-            self.skipTest("pytorch not installed, skipping test: {}".format(str(ex)))
+            raise MissingOptionalLibraryError(
+                libname="Pytorch",
+                name="TorchConnector",
+                pip_install="pip install 'qiskit-machine-learning[torch]'",
+            ) from ex
 
         # test autograd
         func = TorchConnector._TorchNNFunction.apply  # (input, weights, qnn)
