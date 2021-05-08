@@ -102,6 +102,16 @@ class OpflowQNN(NeuralNetwork):
         except (ValueError, TypeError, OpflowError, QiskitError):
             logger.warning("Cannot compute gradient operator! Continuing without gradients!")
 
+    @property
+    def quantum_instance(self) -> QuantumInstance:
+        """Returns the quantum instance to evaluate the circuit."""
+        return self._quantum_instance
+
+    @quantum_instance.setter
+    def quantum_instance(self, quantum_instance) -> None:
+        """Sets the quantum instance to evaluate the circuit."""
+        self._quantum_instance = quantum_instance
+
     def _get_output_shape_from_op(self, op: OperatorBase) -> Tuple[int, ...]:
         """Determines the output shape of a given operator."""
         # TODO: should eventually be moved to opflow

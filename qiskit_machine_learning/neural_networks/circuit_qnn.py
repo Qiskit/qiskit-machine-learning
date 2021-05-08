@@ -70,11 +70,16 @@ class CircuitQNN(SamplingNeuralNetwork):
         Raises:
             QiskitMachineLearningError: if `interpret` is passed without `output_shape`.
         """
-        # TODO: need to handle case without a quantum instance
+
         if isinstance(quantum_instance, (BaseBackend, Backend)):
             quantum_instance = QuantumInstance(quantum_instance)
+        if quantum_instance:
+            self._quantum_instance = quantum_instance
+            self._sampler = CircuitSampler(quantum_instance, param_qobj=False, caching="all")
+        else:
+            self._quantum_instance = None
+            self._sampler = None
 
-        self._quantum_instance = quantum_instance
         self._input_params = list(input_params or [])
         self._weight_params = list(weight_params or [])
         self._interpret = interpret if interpret else lambda x: x
@@ -99,9 +104,6 @@ class CircuitQNN(SamplingNeuralNetwork):
             sampling,
             output_shape_,
         )
-
-        # prepare sampler
-        self._sampler = CircuitSampler(self._quantum_instance, param_qobj=False, caching="all")
 
         self._original_circuit = circuit
         # use given gradient or default
@@ -129,6 +131,8 @@ class CircuitQNN(SamplingNeuralNetwork):
         # this definition is required by mypy
         output_shape_: Tuple[int, ...] = (-1,)
         if sampling:
+            if not self._quantum_instance:
+                raise QiskitMachineLearningError("Sampling requires a quantum instance!")
             num_samples = self._quantum_instance.run_config.shots
             ret = self._interpret(0)  # infer shape from function
             result = np.array(ret)
@@ -242,6 +246,11 @@ class CircuitQNN(SamplingNeuralNetwork):
     def _probabilities(
         self, input_data: Optional[np.ndarray], weights: Optional[np.ndarray]
     ) -> Union[np.ndarray, SparseArray]:
+
+        if not self._quantum_instance:
+            raise QiskitMachineLearningError(
+                "Evaluation of probabilities requires a quantum instance!"
+            )
         # evaluate operator
         circuits = []
         rows = input_data.shape[0]
